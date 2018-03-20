@@ -2,6 +2,7 @@
    The library provides "@type ..." syntax extension and plugins like show, etc.
 *)
 open GT
+open Ostap
 
 (* Opening a library for combinator-based syntax analysis *)
 open Ostap.Combinators
@@ -70,14 +71,28 @@ module Expr =
       | Var   x -> st x
       | Binop (op, x, y) -> to_func op (eval st x) (eval st y)
 
+    let binop_helper blist = List.map (fun op -> ostap($(op)), (fun left right -> Binop (op, left, right))) blist
+
     (* Expression parser. You can use the following terminals:
 
          IDENT   --- a non-empty identifier a-zA-Z[a-zA-Z0-9_]* as a string
          DECIMAL --- a decimal constant [0-9]+ as a string
                                                                                                                   
     *)
-    ostap (                                      
-      parse: empty {failwith "Not yet implemented"}
+    ostap (
+      primary: x:IDENT {Var x} | x:DECIMAL {Const x} | -"(" parse -")";
+      parse: 
+        !(Util.expr
+          (fun x -> x)
+          [|
+            `Lefta, binop_helper ["!!"];
+            `Lefta, binop_helper ["&&"];
+            `Nona,  binop_helper [">="; ">"; "<="; "<"; "=="; "!="];
+            `Lefta, binop_helper ["+"; "-"];
+            `Lefta, binop_helper ["*"; "/"; "%"]
+          |]
+          primary
+        )
     )
     
   end
@@ -111,8 +126,13 @@ module Stmt =
                                 
     (* Statement parser *)
     ostap (
-      parse: empty {failwith "Not yet implemented"}
-    )
+      parse:  seq | stmt;
+      stmt:
+          -"read" -"(" s: IDENT -")" {Read s}
+        | -"write" -"(" e: !(Expr.parse) -")" {Write e}
+        | s: IDENT -":=" e: !(Expr.parse) { Assign (s, e) };
+      seq: left:stmt -";" right:parse { Seq (left, right) }
+    )    
       
   end
 

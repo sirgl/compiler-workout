@@ -1,0 +1,5 @@
+S src/
+S regression/
+PKG GT
+PKG ostap
+FLG -bin-annot

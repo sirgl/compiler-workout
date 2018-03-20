@@ -73,6 +73,58 @@ let show instr =
 (* Opening stack machine to use instructions without fully qualified names *)
 open SM
 
+let rec compile_binop env op =
+  let x, y, env = env#pop2 in
+  let s, env = env#allocate in
+    match op with
+    | "+" | "*" | "-" -> 
+      env, [Mov (y, eax); 
+            Binop (op, x, eax); 
+            Mov (eax, s)
+          ]
+    | ">=" | ">" |  "<=" | "<" | "==" | "!=" ->
+      let suffix = match op with
+        | ">=" -> "ge"
+        | ">" -> "g"
+        | "<=" -> "le"
+        | "<" -> "l"
+        | "==" -> "e"
+        | "!=" -> "ne"
+        | _ -> failwith "Logical operator not supported"
+      in
+      env, [Binop ("^", edx, edx); 
+            Mov (y, eax); 
+            Binop ("cmp", x, eax); 
+            Set (suffix, "%dl"); 
+            Mov (edx, s)
+          ]
+    | "/" ->
+      env, [Mov (y, eax); 
+            Cltd; 
+            IDiv x; 
+            Mov (eax, s)
+          ]
+    | "%" ->
+      env, [Mov (y, eax); 
+            Cltd; 
+            IDiv x; 
+            Mov (edx, s)
+          ] 
+     | "!!" | "&&" ->
+      let to_bool x = [
+              Binop ("^", eax, eax);
+              Binop ("cmp", (L 0), x);
+              Set ("ne", "%al");
+              Mov (eax, x)
+              ] 
+      in
+      env, to_bool x @ 
+            to_bool y @ [
+              Binop (op, eax, edx); 
+              Mov (edx, s)
+            ] 
+    | _ -> failwith "Not yet supported"
+
 (* Symbolic stack machine evaluator
 
      compile : env -> prg -> env * instr list
@@ -80,7 +132,30 @@ open SM
    Take an environment, a stack machine program, and returns a pair --- the updated environment and the list
    of x86 instructions
 *)
-let compile env code = failwith "Not yet implemented"
+let rec compile env = function
+| [] -> env, []
+| (instr : SM.insn) :: tail_instructions ->
+  let env, asm = match instr with
+    | CONST n -> 
+      let s, env = env#allocate in
+      env, [Mov (L n, s)]
+    | WRITE ->
+      let s, env = env#pop in
+      env, [Push s; Call "_Lwrite"; Pop eax]
+    | READ ->
+      let s, env = env#allocate in
+      env, [Call "_Lread"; Mov (eax, s)]
+    | LD x -> 
+      let s, env = (env#global x)#allocate in
+      env, [Mov (M env#loc x, s)]
+    | ST x ->
+      let s, env = (env#global x)#pop in
+      env, [Mov (s, M env#loc x)]
+    | BINOP op -> compile_binop env op
+    | o -> failwith ("Not supported yet: " ^ SM.insn_to_str o)
+  in
+  let env, asm' = compile env tail_instructions in
+  env, asm @ asm'
 
 (* A set of strings *)           
 module S = Set.Make (String)
@@ -151,8 +226,8 @@ let genasm prog =
     )
     env#globals;
   Buffer.add_string asm "\t.text\n";
-  Buffer.add_string asm "\t.globl\tmain\n";
-  Buffer.add_string asm "main:\n";
+  Buffer.add_string asm "\t.globl\t_main\n";
+  Buffer.add_string asm "_main:\n";
   List.iter
     (fun i -> Buffer.add_string asm (Printf.sprintf "%s\n" @@ show i))
     code;
